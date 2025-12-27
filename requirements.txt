@@ -1,0 +1,8 @@
+Flask
+gunicorn
+flask-cors
+requests
+python-dotenv
+openai
+eth-account
+itsdangerous
