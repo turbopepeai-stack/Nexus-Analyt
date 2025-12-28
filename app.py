@@ -82,10 +82,21 @@ CORS(
 )
 from flask import make_response
 
-@app.before_request
-def _handle_options_preflight():
-    if request.method == "OPTIONS":
-        return make_response("", 200)
+# --- Robust CORS Preflight handler (prevents OPTIONS from hanging) ---
+@app.route("/api/<path:_path>", methods=["OPTIONS"])
+def _api_options(_path):
+    resp = make_response("", 204)
+    origin = request.headers.get("Origin", "*")
+    resp.headers["Access-Control-Allow-Origin"] = origin
+    resp.headers["Vary"] = "Origin"
+    resp.headers["Access-Control-Allow-Methods"] = "GET,POST,PUT,DELETE,OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = request.headers.get(
+        "Access-Control-Request-Headers",
+        "Content-Type, Authorization",
+    )
+    resp.headers["Access-Control-Max-Age"] = "86400"
+    return resp
+
 
 @app.route("/", methods=["GET"])
 def root():
@@ -1660,21 +1671,6 @@ def api_grid_start():
     except Exception:
         start_price = 1.0
 
-
-    # ✅ Optional: allow frontend to choose how much of the demo capital is used for this grid.
-    # If not provided, falls back to env/default INITIAL_CAPITAL_USD.
-    invest_usd = body.get("invest_usd")
-    if invest_usd is None:
-        invest_usd = body.get("initial_capital_usd") or body.get("capital_usd") or body.get("budget_usd")
-    try:
-        invest_usd = float(invest_usd) if invest_usd is not None and invest_usd != "" else None
-        if invest_usd is not None:
-            # keep sane bounds; demo default is 5000, but allow smaller allocations
-            if not math.isfinite(invest_usd) or invest_usd <= 0:
-                invest_usd = None
-    except Exception:
-        invest_usd = None
-
     try:
         cfg = {
             "item_id": item_id,
@@ -1682,7 +1678,6 @@ def api_grid_start():
             "order_mode": order_mode,
             "addr": addr,
             "price": start_price,
-            "initial_capital_usd": invest_usd,
             "grid_step_pct": body.get("grid_step_pct"),
             "grid_levels_each_side":  (body.get("grid_levels_each_side") if body.get("grid_levels_each_side") is not None else 5),
             "take_profit_pct": body.get("take_profit_pct"),
@@ -2418,7 +2413,7 @@ def _sim_build(cfg: dict) -> dict:
         "fills": [],
         "created_ts": int(time.time()),
         "rng": random.Random(_sim_seed(item)),
-        "initial_capital_usd": (float(cfg.get("initial_capital_usd")) if cfg.get("initial_capital_usd") not in (None, "", 0) else INITIAL_CAPITAL_USD),
+        "initial_capital_usd": INITIAL_CAPITAL_USD,
     }
     _ensure_pnl(session)
     _pnl_mark(session, base_price)
@@ -2594,4 +2589,3 @@ def _autorun_loop(item_id: str, stop_evt: threading.Event, interval: float):
 if __name__ == "__main__":
 
     app.run(host="127.0.0.1", port=8000, debug=True)
-
