@@ -71,7 +71,22 @@ if GridConfig is None:
 # App init
 # -------------------------
 app = Flask(__name__)
-CORS(app)
+
+CORS(
+    app,
+    resources={r"/api/*": {"origins": "*"}},
+    supports_credentials=False,
+    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+    max_age=86400,
+)
+from flask import make_response
+
+@app.before_request
+def _handle_options_preflight():
+    if request.method == "OPTIONS":
+        return make_response("", 200)
+
 @app.route("/", methods=["GET"])
 def root():
     return jsonify({
@@ -2563,4 +2578,5 @@ def _autorun_loop(item_id: str, stop_evt: threading.Event, interval: float):
 if __name__ == "__main__":
 
     app.run(host="127.0.0.1", port=8000, debug=True)
+
 
