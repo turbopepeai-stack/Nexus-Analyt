@@ -1,4 +1,4 @@
-# backend/app.py
+ # backend/app.py
 from __future__ import annotations
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -84,8 +84,32 @@ from flask import make_response
 
 @app.before_request
 def _handle_options_preflight():
-    if request.method == "OPTIONS":
-        return make_response("", 200)
+    # Robust CORS preflight handling.
+    # Some browsers will keep the request in "pending" if OPTIONS doesn't return
+    # the expected CORS headers immediately.
+    if request.method == "OPTIONS" and request.path.startswith("/api/"):
+        resp = make_response("", 204)
+        origin = request.headers.get("Origin") or "*"
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Vary"] = "Origin"
+        resp.headers["Access-Control-Allow-Methods"] = "GET,POST,PUT,DELETE,OPTIONS"
+        req_hdrs = request.headers.get("Access-Control-Request-Headers")
+        resp.headers["Access-Control-Allow-Headers"] = req_hdrs or "Content-Type, Authorization"
+        resp.headers["Access-Control-Max-Age"] = "86400"
+        return resp
+
+@app.after_request
+def _add_cors_headers(resp):
+    # Ensure ALL /api/* responses carry CORS headers (not only preflight),
+    # without changing any business logic.
+    if request.path.startswith("/api/"):
+        origin = request.headers.get("Origin") or "*"
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Vary"] = "Origin"
+        resp.headers["Access-Control-Allow-Methods"] = "GET,POST,PUT,DELETE,OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = resp.headers.get("Access-Control-Allow-Headers") or "Content-Type, Authorization"
+        resp.headers["Access-Control-Max-Age"] = "86400"
+    return resp
 
 @app.route("/", methods=["GET"])
 def root():
@@ -1672,7 +1696,6 @@ def api_grid_start():
             "take_profit_pct": body.get("take_profit_pct"),
             "stop_loss_pct": body.get("stop_loss_pct"),
             "levels": body.get("levels"),
-            "initial_capital_usd": (body.get("invest_usd") or body.get("initial_capital_usd") or body.get("capital_usd") or body.get("budget_usd")),
         }
 
         session = _sim_build(cfg)
@@ -2403,7 +2426,7 @@ def _sim_build(cfg: dict) -> dict:
         "fills": [],
         "created_ts": int(time.time()),
         "rng": random.Random(_sim_seed(item)),
-        "initial_capital_usd": float(cfg.get("initial_capital_usd") or INITIAL_CAPITAL_USD),
+        "initial_capital_usd": INITIAL_CAPITAL_USD,
     }
     _ensure_pnl(session)
     _pnl_mark(session, base_price)
