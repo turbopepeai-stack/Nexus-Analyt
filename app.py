@@ -2380,11 +2380,12 @@ def _sim_build(cfg: dict) -> dict:
         budget_per_buy = invest_usd / buy_orders_count
 
     # Build initial grid levels (as "planned" orders)
-    orders = []
+        orders = []
     for i in range(1, levels_each_side + 1):
-        buy_p = base_price * (1.0 - (step_pct/100.0) * i)
-        sell_p = base_price * (1.0 + (step_pct/100.0) * i)
-                buy_order = {
+        buy_p = base_price * (1.0 - (step_pct / 100.0) * i)
+        sell_p = base_price * (1.0 + (step_pct / 100.0) * i)
+
+        buy_order = {
             "id": f"a{item}_B{-i}",
             "item": item,
             "side": "BUY",
@@ -2397,7 +2398,7 @@ def _sim_build(cfg: dict) -> dict:
             try:
                 if buy_p > 0:
                     buy_order["qty"] = round(budget_per_buy / buy_p, 8)
-                    buy_order["usd"] = round(budget_per_buy, 2)  # optional (nice for UI)
+                    buy_order["usd"] = round(budget_per_buy, 2)
             except Exception:
                 pass
 
@@ -2411,6 +2412,7 @@ def _sim_build(cfg: dict) -> dict:
             "status": "OPEN",
             "level": i,
         })
+
 
     session = {
         "item": item,
@@ -2633,6 +2635,7 @@ def _autorun_loop(item_id: str, stop_evt: threading.Event, interval: float):
 if __name__ == "__main__":
 
     app.run(host="127.0.0.1", port=8000, debug=True)
+
 
 
 
