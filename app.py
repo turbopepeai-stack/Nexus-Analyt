@@ -1672,6 +1672,7 @@ def api_grid_start():
             "take_profit_pct": body.get("take_profit_pct"),
             "stop_loss_pct": body.get("stop_loss_pct"),
             "levels": body.get("levels"),
+            "initial_capital_usd": (body.get("invest_usd") or body.get("initial_capital_usd") or body.get("capital_usd") or body.get("budget_usd")),
         }
 
         session = _sim_build(cfg)
@@ -2402,7 +2403,7 @@ def _sim_build(cfg: dict) -> dict:
         "fills": [],
         "created_ts": int(time.time()),
         "rng": random.Random(_sim_seed(item)),
-        "initial_capital_usd": INITIAL_CAPITAL_USD,
+        "initial_capital_usd": float(cfg.get("initial_capital_usd") or INITIAL_CAPITAL_USD),
     }
     _ensure_pnl(session)
     _pnl_mark(session, base_price)
