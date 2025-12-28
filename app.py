@@ -2364,20 +2364,45 @@ def _sim_build(cfg: dict) -> dict:
     levels_each_side = int(cfg.get("levels") or cfg.get("grid_levels_each_side") or (12 if mode == "AGGRESSIVE" else 10))
     tp_pct = float(cfg.get("take_profit_pct") or (30.0 if mode == "AGGRESSIVE" else 50.0))
     sl_pct = float(cfg.get("stop_loss_pct") or (15.0 if mode == "AGGRESSIVE" else 20.0))
+    
+    # --- AUTO: invest_usd -> qty planning for BUY orders ---
+    invest_usd = cfg.get("invest_usd")
+    try:
+        invest_usd = float(invest_usd) if invest_usd is not None else None
+        if invest_usd is not None and invest_usd <= 0:
+            invest_usd = None
+    except Exception:
+        invest_usd = None
+
+    buy_orders_count = int(levels_each_side)  # 1 BUY per level
+    budget_per_buy = None
+    if invest_usd is not None and buy_orders_count > 0:
+        budget_per_buy = invest_usd / buy_orders_count
 
     # Build initial grid levels (as "planned" orders)
     orders = []
     for i in range(1, levels_each_side + 1):
         buy_p = base_price * (1.0 - (step_pct/100.0) * i)
         sell_p = base_price * (1.0 + (step_pct/100.0) * i)
-        orders.append({
+                buy_order = {
             "id": f"a{item}_B{-i}",
             "item": item,
             "side": "BUY",
             "price": round(buy_p, 8),
             "status": "OPEN",
             "level": -i,
-        })
+        }
+
+        if budget_per_buy is not None:
+            try:
+                if buy_p > 0:
+                    buy_order["qty"] = round(budget_per_buy / buy_p, 8)
+                    buy_order["usd"] = round(budget_per_buy, 2)  # optional (nice for UI)
+            except Exception:
+                pass
+
+        orders.append(buy_order)
+
         orders.append({
             "id": f"a{item}_S{i}",
             "item": item,
@@ -2608,5 +2633,6 @@ def _autorun_loop(item_id: str, stop_evt: threading.Event, interval: float):
 if __name__ == "__main__":
 
     app.run(host="127.0.0.1", port=8000, debug=True)
+
 
 
