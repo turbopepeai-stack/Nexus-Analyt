@@ -1679,29 +1679,29 @@ def api_grid_start():
         session["last_price"] = start_price
 
         # ✅ Attach real historical series (for "Tick" backtest stepping)
-      if str(os.getenv("NEXUS_ATTACH_HISTORY_ON_START", "0")).lower() in ("1","true","yes"):
+        if str(os.getenv("NEXUS_ATTACH_HISTORY_ON_START", "0")).lower() in ("1","true","yes"):
   
-        try:
-            # If watchlist snapshot tells us the CoinGecko id, use it
-            cg_id = None
-            snap = SNAPSHOTS.get(item_id)
-            if snap and isinstance(snap.get("data"), dict):
-                cg_id = snap["data"].get("id") if snap["data"].get("mode") == "market" else None
+          try:
+              # If watchlist snapshot tells us the CoinGecko id, use it
+              cg_id = None
+              snap = SNAPSHOTS.get(item_id)
+              if snap and isinstance(snap.get("data"), dict):
+                  cg_id = snap["data"].get("id") if snap["data"].get("mode") == "market" else None
 
-            if cg_id:
-                if cg_id in PRICE_SERIES_CACHE and PRICE_SERIES_CACHE[cg_id].get("series"):
-                    series = PRICE_SERIES_CACHE[cg_id]["series"]
-                else:
-                    series = _cg_price_series(cg_id, days=14)
-                    PRICE_SERIES_CACHE[cg_id] = {"ts": now_ts(), "series": series}
+              if cg_id:
+                  if cg_id in PRICE_SERIES_CACHE and PRICE_SERIES_CACHE[cg_id].get("series"):
+                      series = PRICE_SERIES_CACHE[cg_id]["series"]
+                  else:
+                      series = _cg_price_series(cg_id, days=14)
+                      PRICE_SERIES_CACHE[cg_id] = {"ts": now_ts(), "series": series}
 
-                if series:
-                    session["price_series"] = series
-                    # start from the last point (most recent) so Tick can move "forward" in past?
-                    # Better: start near end-50 so user can tick through recent history
-                    session["series_idx"] = max(0, len(series) - 60)
-                    session["series_cg_id"] = cg_id
-        except Exception:
+                  if series:
+                      session["price_series"] = series
+                      # start from the last point (most recent) so Tick can move "forward" in past?
+                      # Better: start near end-50 so user can tick through recent history
+                      session["series_idx"] = max(0, len(series) - 60)
+                      session["series_cg_id"] = cg_id
+          except Exception:
             pass
 
         GRID_CONFIGS[item_id] = cfg
@@ -2637,6 +2637,7 @@ def _autorun_loop(item_id: str, stop_evt: threading.Event, interval: float):
 if __name__ == "__main__":
 
     app.run(host="127.0.0.1", port=8000, debug=True)
+
 
 
 
