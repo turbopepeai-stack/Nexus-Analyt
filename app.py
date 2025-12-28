@@ -82,21 +82,10 @@ CORS(
 )
 from flask import make_response
 
-# --- Robust CORS Preflight handler (prevents OPTIONS from hanging) ---
-@app.route("/api/<path:_path>", methods=["OPTIONS"])
-def _api_options(_path):
-    resp = make_response("", 204)
-    origin = request.headers.get("Origin", "*")
-    resp.headers["Access-Control-Allow-Origin"] = origin
-    resp.headers["Vary"] = "Origin"
-    resp.headers["Access-Control-Allow-Methods"] = "GET,POST,PUT,DELETE,OPTIONS"
-    resp.headers["Access-Control-Allow-Headers"] = request.headers.get(
-        "Access-Control-Request-Headers",
-        "Content-Type, Authorization",
-    )
-    resp.headers["Access-Control-Max-Age"] = "86400"
-    return resp
-
+@app.before_request
+def _handle_options_preflight():
+    if request.method == "OPTIONS":
+        return make_response("", 200)
 
 @app.route("/", methods=["GET"])
 def root():
