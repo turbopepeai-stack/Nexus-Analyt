@@ -1,4 +1,3 @@
-
 # backend/app.py
 from __future__ import annotations
 from flask import Flask, jsonify, request
@@ -77,6 +76,9 @@ CORS(app)
 # Flask secret key for signing tokens (set FLASK_SECRET_KEY in env for production)
 app.secret_key = os.getenv("FLASK_SECRET_KEY") or secrets.token_hex(32)
 _serializer = URLSafeTimedSerializer(app.secret_key)
+
+# Demo/simulation starting capital per asset (USD)
+INITIAL_CAPITAL_USD = float(os.getenv("NEXUS_INITIAL_CAPITAL_USD", "5000"))
 
 # -------------------------
 # Helpers
@@ -439,9 +441,16 @@ except Exception as _e:
 # -------------------------
 
 def _ensure_pnl(sess: dict) -> dict:
-    # Position-based PnL simulation (qty units, average cost)
+    # Position-based PnL simulation (qty units, average cost) + demo equity/ROI
     if not isinstance(sess, dict):
         return {}
+    # demo capital basis
+    sess.setdefault("initial_capital_usd", INITIAL_CAPITAL_USD)
+    # derived fields (kept updated by _pnl_mark)
+    sess.setdefault("equity_usd", float(sess.get("initial_capital_usd") or INITIAL_CAPITAL_USD))
+    sess.setdefault("pnl_pct", 0.0)
+
+    # position-based pnl
     sess.setdefault("position_qty", 0.0)
     sess.setdefault("avg_cost", 0.0)
     sess.setdefault("realized_pnl", 0.0)
@@ -1675,12 +1684,33 @@ def api_grid_start():
         GRID_SESSIONS[item_id] = _trim_grid_session(session)
         _persist_grid_state()
 
+        # --- PnL + demo equity init ---
+        try:
+            _ensure_pnl(session)
+            _pnl_mark(session, session.get("price"))
+        except Exception:
+            pass
+
         return jsonify({
             "status": "ok",
             "item": item_id,
             "mode": mode,
             "config": cfg,
             "price": session.get("price"),
+            "sim": {
+                "simulation": True,
+                "uses_real_market_data": True,
+                "initial_capital_usd": float(session.get("initial_capital_usd") or INITIAL_CAPITAL_USD),
+                "equity_usd": float(session.get("equity_usd") or 0.0),
+                "pnl_pct": float(session.get("pnl_pct") or 0.0),
+            },
+            "pnl": {
+                "pos": float(session.get("position_qty") or 0.0),
+                "avg_cost": float(session.get("avg_cost") or 0.0),
+                "realized": float(session.get("realized_pnl") or 0.0),
+                "unrealized": float(session.get("unrealized_pnl") or 0.0),
+                "total": float(session.get("total_pnl") or 0.0),
+            },
             "orders": session.get("orders", []),
             "fills": session.get("fills", []),
         })
@@ -1766,7 +1796,15 @@ def api_grid_tick():
         "item": item_id,
         "tick": int(updated.get("ticks") or 0) if isinstance(updated, dict) else 0,
         "price": float(updated.get("price") or 0) if isinstance(updated, dict) else 0,
-        "price_source": ("frontend" if price is not None else ("snapshot" if new_price is not None else "none")),
+        "price_source": price_source_label,
+
+        "sim": {
+            "simulation": True,
+            "uses_real_market_data": True,
+            "initial_capital_usd": float(session.get("initial_capital_usd") or INITIAL_CAPITAL_USD),
+            "equity_usd": float(session.get("equity_usd") or 0.0),
+            "pnl_pct": float(session.get("pnl_pct") or 0.0),
+        },
 
         "pnl": {
             "pos": float(session.get("position_qty") or 0),
@@ -2338,7 +2376,10 @@ def _sim_build(cfg: dict) -> dict:
         "fills": [],
         "created_ts": int(time.time()),
         "rng": random.Random(_sim_seed(item)),
+        "initial_capital_usd": INITIAL_CAPITAL_USD,
     }
+    _ensure_pnl(session)
+    _pnl_mark(session, base_price)
     return session
 
 def _sim_tick(session: dict, new_price: Optional[float] = None) -> dict:
