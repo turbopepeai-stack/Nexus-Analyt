@@ -72,6 +72,17 @@ if GridConfig is None:
 # -------------------------
 app = Flask(__name__)
 CORS(app)
+@app.route("/", methods=["GET"])
+def root():
+    return jsonify({
+        "status": "ok",
+        "service": "Nexus-Analyt backend",
+        "hint": "Try /api/health or /api/watchlist"
+    })
+
+@app.route("/api/healthz", methods=["GET"])
+def healthz():
+    return jsonify({"status": "ok"})
 
 # Flask secret key for signing tokens (set FLASK_SECRET_KEY in env for production)
 app.secret_key = os.getenv("FLASK_SECRET_KEY") or secrets.token_hex(32)
@@ -2552,3 +2563,4 @@ def _autorun_loop(item_id: str, stop_evt: threading.Event, interval: float):
 if __name__ == "__main__":
 
     app.run(host="127.0.0.1", port=8000, debug=True)
+
