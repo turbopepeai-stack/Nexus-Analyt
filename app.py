@@ -82,34 +82,6 @@ CORS(
 )
 from flask import make_response
 
-@app.before_request
-def _handle_options_preflight():
-    # Robust CORS preflight handling.
-    # Some browsers will keep the request in "pending" if OPTIONS doesn't return
-    # the expected CORS headers immediately.
-    if request.method == "OPTIONS" and request.path.startswith("/api/"):
-        resp = make_response("", 204)
-        origin = request.headers.get("Origin") or "*"
-        resp.headers["Access-Control-Allow-Origin"] = origin
-        resp.headers["Vary"] = "Origin"
-        resp.headers["Access-Control-Allow-Methods"] = "GET,POST,PUT,DELETE,OPTIONS"
-        req_hdrs = request.headers.get("Access-Control-Request-Headers")
-        resp.headers["Access-Control-Allow-Headers"] = req_hdrs or "Content-Type, Authorization"
-        resp.headers["Access-Control-Max-Age"] = "86400"
-        return resp
-
-@app.after_request
-def _add_cors_headers(resp):
-    # Ensure ALL /api/* responses carry CORS headers (not only preflight),
-    # without changing any business logic.
-    if request.path.startswith("/api/"):
-        origin = request.headers.get("Origin") or "*"
-        resp.headers["Access-Control-Allow-Origin"] = origin
-        resp.headers["Vary"] = "Origin"
-        resp.headers["Access-Control-Allow-Methods"] = "GET,POST,PUT,DELETE,OPTIONS"
-        resp.headers["Access-Control-Allow-Headers"] = resp.headers.get("Access-Control-Allow-Headers") or "Content-Type, Authorization"
-        resp.headers["Access-Control-Max-Age"] = "86400"
-    return resp
 
 @app.route("/", methods=["GET"])
 def root():
@@ -2602,3 +2574,4 @@ def _autorun_loop(item_id: str, stop_evt: threading.Event, interval: float):
 if __name__ == "__main__":
 
     app.run(host="127.0.0.1", port=8000, debug=True)
+
