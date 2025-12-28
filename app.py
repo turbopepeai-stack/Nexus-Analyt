@@ -1,4 +1,4 @@
- # backend/app.py
+# backend/app.py
 from __future__ import annotations
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -82,6 +82,10 @@ CORS(
 )
 from flask import make_response
 
+@app.before_request
+def _handle_options_preflight():
+    if request.method == "OPTIONS":
+        return make_response("", 200)
 
 @app.route("/", methods=["GET"])
 def root():
@@ -1668,6 +1672,7 @@ def api_grid_start():
             "take_profit_pct": body.get("take_profit_pct"),
             "stop_loss_pct": body.get("stop_loss_pct"),
             "levels": body.get("levels"),
+            "initial_capital_usd": (body.get("invest_usd") or body.get("initial_capital_usd") or body.get("capital_usd") or body.get("budget_usd")),
         }
 
         session = _sim_build(cfg)
@@ -1679,30 +1684,29 @@ def api_grid_start():
         session["last_price"] = start_price
 
         # ✅ Attach real historical series (for "Tick" backtest stepping)
-        if str(os.getenv("NEXUS_ATTACH_HISTORY_ON_START", "0")).lower() in ("1","true","yes"):
-  
-          try:
-              # If watchlist snapshot tells us the CoinGecko id, use it
-              cg_id = None
-              snap = SNAPSHOTS.get(item_id)
-              if snap and isinstance(snap.get("data"), dict):
-                  cg_id = snap["data"].get("id") if snap["data"].get("mode") == "market" else None
+        if str(os.getenv("NEXUS_ATTACH_HISTORY_ON_START", "1")).lower() in ("1", "true", "yes"):
+            try:
+                # If watchlist snapshot tells us the CoinGecko id, use it
+                cg_id = None
+                snap = SNAPSHOTS.get(item_id)
+                if snap and isinstance(snap.get("data"), dict):
+                    cg_id = snap["data"].get("id") if snap["data"].get("mode") == "market" else None
 
-              if cg_id:
-                  if cg_id in PRICE_SERIES_CACHE and PRICE_SERIES_CACHE[cg_id].get("series"):
-                      series = PRICE_SERIES_CACHE[cg_id]["series"]
-                  else:
-                      series = _cg_price_series(cg_id, days=14)
-                      PRICE_SERIES_CACHE[cg_id] = {"ts": now_ts(), "series": series}
+                if cg_id:
+                    if cg_id in PRICE_SERIES_CACHE and PRICE_SERIES_CACHE[cg_id].get("series"):
+                        series = PRICE_SERIES_CACHE[cg_id]["series"]
+                    else:
+                        series = _cg_price_series(cg_id, days=14)
+                        PRICE_SERIES_CACHE[cg_id] = {"ts": now_ts(), "series": series}
 
-                  if series:
-                      session["price_series"] = series
-                      # start from the last point (most recent) so Tick can move "forward" in past?
-                      # Better: start near end-50 so user can tick through recent history
-                      session["series_idx"] = max(0, len(series) - 60)
-                      session["series_cg_id"] = cg_id
-          except Exception:
-            pass
+                    if series:
+                        session["price_series"] = series
+                        # Start near the last ~60 points so user can tick through recent history
+                        session["series_idx"] = max(0, len(series) - 60)
+                        session["series_cg_id"] = cg_id
+            except Exception:
+                pass
+
 
         GRID_CONFIGS[item_id] = cfg
         GRID_SESSIONS[item_id] = _trim_grid_session(session)
@@ -2366,9 +2370,10 @@ def _sim_build(cfg: dict) -> dict:
     levels_each_side = int(cfg.get("levels") or cfg.get("grid_levels_each_side") or (12 if mode == "AGGRESSIVE" else 10))
     tp_pct = float(cfg.get("take_profit_pct") or (30.0 if mode == "AGGRESSIVE" else 50.0))
     sl_pct = float(cfg.get("stop_loss_pct") or (15.0 if mode == "AGGRESSIVE" else 20.0))
-    
+
     # --- AUTO: invest_usd -> qty planning for BUY orders ---
-    invest_usd = cfg.get("invest_usd")
+    # Frontend can send invest_usd (e.g. 1000). We split it evenly across BUY legs.
+    invest_usd = cfg.get("invest_usd") if cfg.get("invest_usd") is not None else cfg.get("initial_capital_usd")
     try:
         invest_usd = float(invest_usd) if invest_usd is not None else None
         if invest_usd is not None and invest_usd <= 0:
@@ -2377,16 +2382,13 @@ def _sim_build(cfg: dict) -> dict:
         invest_usd = None
 
     buy_orders_count = int(levels_each_side)  # 1 BUY per level
-    budget_per_buy = None
-    if invest_usd is not None and buy_orders_count > 0:
-        budget_per_buy = invest_usd / buy_orders_count
+    budget_per_buy = (invest_usd / buy_orders_count) if (invest_usd is not None and buy_orders_count > 0) else None
 
     # Build initial grid levels (as "planned" orders)
-        orders = []
+    orders = []
     for i in range(1, levels_each_side + 1):
-        buy_p = base_price * (1.0 - (step_pct / 100.0) * i)
-        sell_p = base_price * (1.0 + (step_pct / 100.0) * i)
-
+        buy_p = base_price * (1.0 - (step_pct/100.0) * i)
+        sell_p = base_price * (1.0 + (step_pct/100.0) * i)
         buy_order = {
             "id": f"a{item}_B{-i}",
             "item": item,
@@ -2400,12 +2402,11 @@ def _sim_build(cfg: dict) -> dict:
             try:
                 if buy_p > 0:
                     buy_order["qty"] = round(budget_per_buy / buy_p, 8)
-                    buy_order["usd"] = round(budget_per_buy, 2)
+                    buy_order["usd"] = round(budget_per_buy, 2)  # optional (nice for UI)
             except Exception:
                 pass
 
         orders.append(buy_order)
-
         orders.append({
             "id": f"a{item}_S{i}",
             "item": item,
@@ -2414,7 +2415,6 @@ def _sim_build(cfg: dict) -> dict:
             "status": "OPEN",
             "level": i,
         })
-
 
     session = {
         "item": item,
@@ -2427,18 +2427,26 @@ def _sim_build(cfg: dict) -> dict:
         "fills": [],
         "created_ts": int(time.time()),
         "rng": random.Random(_sim_seed(item)),
-        "initial_capital_usd": INITIAL_CAPITAL_USD,
+        "initial_capital_usd": float(cfg.get("initial_capital_usd") or INITIAL_CAPITAL_USD),
     }
     _ensure_pnl(session)
     _pnl_mark(session, base_price)
     return session
 
-def _sim_tick(session: dict, new_price=None) -> dict:
+def _sim_tick(session: dict, new_price: Optional[float] = None) -> dict:
+    """
+    One simulation step using REAL price (frontend/snapshot/history).
+    Key fix: last_price must be the previous session["price"] (not a stale initial value),
+    otherwise cross-detection can silently miss.
+    Also: if price is already beyond a level, we still fill it (for jumps).
+    """
+    # previous price (truth source)
     try:
-        prev_price = float(session.get("price") or 0.0)
+        prev_price = float(session.get("price") or 0)
     except Exception:
         prev_price = 0.0
 
+    # choose current price
     price = None
     if new_price is not None:
         try:
@@ -2447,7 +2455,7 @@ def _sim_tick(session: dict, new_price=None) -> dict:
             price = None
 
     if price is None:
-        item_key = str(session.get("item") or "").strip().lower()
+        item_key = str(session.get("item") or session.get("item_id") or "").strip()
         snap = SNAPSHOTS.get(item_key)
         if snap and isinstance(snap.get("data"), dict):
             try:
@@ -2455,54 +2463,12 @@ def _sim_tick(session: dict, new_price=None) -> dict:
             except Exception:
                 price = None
 
-    # ❗ KEIN PREIS → NICHTS LÖSCHEN
+    # No reliable new price -> only tick counter
     if price is None or not (price > 0):
         session["ticks"] = int(session.get("ticks") or 0) + 1
         session["last_price"] = prev_price
         session["filled_now"] = 0
         return session
-
-    session["ticks"] = int(session.get("ticks") or 0) + 1
-    session["last_price"] = prev_price
-    session["price"] = price
-
-    fills = session.get("fills") if isinstance(session.get("fills"), list) else []
-    filled_now = 0
-
-    for o in session.get("orders", []):
-        if not isinstance(o, dict) or o.get("status") != "OPEN":
-            continue
-
-        try:
-            op = float(o.get("price") or 0)
-        except Exception:
-            continue
-
-        side = str(o.get("side") or "").upper()
-
-        if side == "BUY" and price <= op:
-            o["status"] = "FILLED"
-        elif side == "SELL" and price >= op:
-            o["status"] = "FILLED"
-        else:
-            continue
-
-        o["filled_ts"] = int(time.time())
-        o["fill_price"] = round(price, 8)
-
-        fills.append({
-            "side": o.get("side"),
-            "level": o.get("level"),
-            "price": o.get("price"),
-            "fill_price": o.get("fill_price"),
-            "filled_ts": o.get("filled_ts"),
-        })
-        filled_now += 1
-
-    session["fills"] = fills[-500:]
-    session["filled_now"] = filled_now
-    return session
-
 
 
 def _get_live_price_for_item(item_id: str) -> Optional[float]:
@@ -2637,9 +2603,3 @@ def _autorun_loop(item_id: str, stop_evt: threading.Event, interval: float):
 if __name__ == "__main__":
 
     app.run(host="127.0.0.1", port=8000, debug=True)
-
-
-
-
-
-
