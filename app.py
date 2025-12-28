@@ -1679,6 +1679,8 @@ def api_grid_start():
         session["last_price"] = start_price
 
         # ✅ Attach real historical series (for "Tick" backtest stepping)
+      if str(os.getenv("NEXUS_ATTACH_HISTORY_ON_START", "0")).lower() in ("1","true","yes"):
+  
         try:
             # If watchlist snapshot tells us the CoinGecko id, use it
             cg_id = None
@@ -2635,6 +2637,7 @@ def _autorun_loop(item_id: str, stop_evt: threading.Event, interval: float):
 if __name__ == "__main__":
 
     app.run(host="127.0.0.1", port=8000, debug=True)
+
 
 
 
