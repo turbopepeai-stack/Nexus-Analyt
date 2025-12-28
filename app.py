@@ -2404,20 +2404,12 @@ def _sim_build(cfg: dict) -> dict:
     _pnl_mark(session, base_price)
     return session
 
-def _sim_tick(session: dict, new_price: Optional[float] = None) -> dict:
-    """
-    One simulation step using REAL price (frontend/snapshot/history).
-    Key fix: last_price must be the previous session["price"] (not a stale initial value),
-    otherwise cross-detection can silently miss.
-    Also: if price is already beyond a level, we still fill it (for jumps).
-    """
-    # previous price (truth source)
+def _sim_tick(session: dict, new_price=None) -> dict:
     try:
-        prev_price = float(session.get("price") or 0)
+        prev_price = float(session.get("price") or 0.0)
     except Exception:
         prev_price = 0.0
 
-    # choose current price
     price = None
     if new_price is not None:
         try:
@@ -2426,7 +2418,7 @@ def _sim_tick(session: dict, new_price: Optional[float] = None) -> dict:
             price = None
 
     if price is None:
-        item_key = str(session.get("item") or session.get("item_id") or "").strip()
+        item_key = str(session.get("item") or "").strip().lower()
         snap = SNAPSHOTS.get(item_key)
         if snap and isinstance(snap.get("data"), dict):
             try:
@@ -2434,12 +2426,54 @@ def _sim_tick(session: dict, new_price: Optional[float] = None) -> dict:
             except Exception:
                 price = None
 
-    # No reliable new price -> only tick counter
+    # ❗ KEIN PREIS → NICHTS LÖSCHEN
     if price is None or not (price > 0):
         session["ticks"] = int(session.get("ticks") or 0) + 1
         session["last_price"] = prev_price
         session["filled_now"] = 0
         return session
+
+    session["ticks"] = int(session.get("ticks") or 0) + 1
+    session["last_price"] = prev_price
+    session["price"] = price
+
+    fills = session.get("fills") if isinstance(session.get("fills"), list) else []
+    filled_now = 0
+
+    for o in session.get("orders", []):
+        if not isinstance(o, dict) or o.get("status") != "OPEN":
+            continue
+
+        try:
+            op = float(o.get("price") or 0)
+        except Exception:
+            continue
+
+        side = str(o.get("side") or "").upper()
+
+        if side == "BUY" and price <= op:
+            o["status"] = "FILLED"
+        elif side == "SELL" and price >= op:
+            o["status"] = "FILLED"
+        else:
+            continue
+
+        o["filled_ts"] = int(time.time())
+        o["fill_price"] = round(price, 8)
+
+        fills.append({
+            "side": o.get("side"),
+            "level": o.get("level"),
+            "price": o.get("price"),
+            "fill_price": o.get("fill_price"),
+            "filled_ts": o.get("filled_ts"),
+        })
+        filled_now += 1
+
+    session["fills"] = fills[-500:]
+    session["filled_now"] = filled_now
+    return session
+
 
 
 def _get_live_price_for_item(item_id: str) -> Optional[float]:
@@ -2574,4 +2608,5 @@ def _autorun_loop(item_id: str, stop_evt: threading.Event, interval: float):
 if __name__ == "__main__":
 
     app.run(host="127.0.0.1", port=8000, debug=True)
+
 
