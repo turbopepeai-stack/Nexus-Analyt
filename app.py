@@ -823,6 +823,29 @@ def _gen_cache_get_fresh(key: str):
     return None
 
 
+
+
+# -------------------------
+# Resolver history cache (for multi-coin charts)
+# -------------------------
+# Longer TTL than generic endpoints because historical series doesn't need frequent refresh.
+_RES_HIST_CACHE = {"by_key": {}, "ts": {}}
+_RES_HIST_TTL_SEC = int(os.getenv("RES_HIST_TTL_SEC", "900"))  # 15 min default
+
+def _res_hist_cache_get_fresh(key: str):
+    now = time.time()
+    ts = _RES_HIST_CACHE["ts"].get(key, 0)
+    if key in _RES_HIST_CACHE["by_key"] and (now - ts) < _RES_HIST_TTL_SEC:
+        return _RES_HIST_CACHE["by_key"][key]
+    return None
+
+def _res_hist_cache_get_any(key: str):
+    return _RES_HIST_CACHE["by_key"].get(key)
+
+def _res_hist_cache_set(key: str, value):
+    _RES_HIST_CACHE["by_key"][key] = value
+    _RES_HIST_CACHE["ts"][key] = time.time()
+
 def _cg_request_json(url: str, params: dict, timeout: int = 20):
     # CoinGecko GET with small retry/backoff on 429.
     last_exc = None
@@ -1633,6 +1656,96 @@ def api_watchlist_snapshot():
         return jsonify({"status": "ok", "results": results, "ts": int(time.time())})
     except Exception as e:
         return jsonify({"status": "error", "error": str(e), "results": [], "ts": int(time.time())}), 500
+
+@app.route("/api/resolver/history", methods=["POST"])
+def api_resolver_history():
+    """
+    Multi-coin historical price series for Resolver compare charts.
+
+    Request JSON:
+      { "ids": ["bitcoin","ethereum", ...], "days": 7|30|90 }
+
+    Notes:
+    - max 20 ids
+    - cached with longer TTL (default 15 min via RES_HIST_TTL_SEC)
+    - best-effort fallback to last cached value if upstream is down/rate-limited
+    """
+    try:
+        payload = request.get_json(silent=True) or {}
+        ids = payload.get("ids") or []
+        days = int(payload.get("days") or 30)
+
+        if not isinstance(ids, list) or not ids:
+            return err("Missing ids (list).", 400)
+        if len(ids) > 20:
+            return err("Max 20 ids.", 400)
+        if days not in (7, 30, 90):
+            return err("days must be 7, 30, or 90.", 400)
+
+        # normalize ids
+        norm_ids = []
+        for cid in ids:
+            if not isinstance(cid, str):
+                continue
+            cid = cid.strip().lower()
+            if cid:
+                norm_ids.append(cid)
+        if not norm_ids:
+            return err("No valid ids.", 400)
+
+        cache_key = "resolver_hist|" + str(days) + "|" + ",".join(sorted(set(norm_ids)))
+
+        fresh = _res_hist_cache_get_fresh(cache_key)
+        if fresh is not None:
+            return jsonify(fresh)
+
+        series = {}
+        errors = {}
+
+        for cid in norm_ids:
+            try:
+                j = _cg_market_chart_usd(cid, days) or {}
+                prices = j.get("prices") or []
+                # prices is [[ts_ms, price], ...]
+                if isinstance(prices, list) and prices:
+                    series[cid] = prices
+                else:
+                    errors[cid] = "no_prices"
+            except Exception as e:
+                errors[cid] = str(e)
+
+        out = {"days": days, "series": series}
+        if errors:
+            out["errors"] = errors
+
+        # If we got at least one series, cache it as last known good
+        if series:
+            _res_hist_cache_set(cache_key, out)
+            return jsonify(out)
+
+        # If nothing succeeded, return last cached value if any
+        stale = _res_hist_cache_get_any(cache_key)
+        if stale is not None:
+            return jsonify(stale)
+
+        return err("No data available.", 502)
+
+    except Exception as e:
+        # Best-effort fallback
+        try:
+            payload = request.get_json(silent=True) or {}
+            ids = payload.get("ids") or []
+            days = int(payload.get("days") or 30)
+            norm_ids = [str(x).strip().lower() for x in ids if isinstance(x, str) and str(x).strip()]
+            cache_key = "resolver_hist|" + str(days) + "|" + ",".join(sorted(set(norm_ids)))
+            stale = _res_hist_cache_get_any(cache_key)
+            if stale is not None:
+                return jsonify(stale)
+        except Exception:
+            pass
+        return err(str(e), 500)
+
+
 @app.route("/api/grid/start", methods=["POST"])
 def api_grid_start():
     body = request.get_json(silent=True) or {}
